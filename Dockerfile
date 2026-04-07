@@ -11,4 +11,4 @@ COPY . .
 EXPOSE 7860
 
 # Run inference first, then start the server from the new folder location
-CMD python inference.py && uvicorn server.app:app --host 0.0.0.0 --port 7860
+CMD python inference.py && python -m server.app
