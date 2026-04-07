@@ -7,8 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Expose port 7860 (This is required by Hugging Face)
+# Expose port 7860 for Hugging Face
 EXPOSE 7860
 
-# Run the inference script for the logs, then start the web server to stay alive
-CMD python inference.py && uvicorn app:app --host 0.0.0.0 --port 7860
+# Run inference first, then start the server from the new folder location
+CMD python inference.py && uvicorn server.app:app --host 0.0.0.0 --port 7860
