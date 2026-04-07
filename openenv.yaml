@@ -1,0 +1,10 @@
+version: "1.0"
+name: "CodeReviewEnv"
+description: "A real-world task environment for automated code review, triaging snippets into APPROVE, REJECT_BUG, or REJECT_SECURITY."
+tasks:
+  - name: "easy"
+    description: "Review a single PR with an obvious syntax error."
+  - name: "medium"
+    description: "Review a mix of clean code and basic logic bugs."
+  - name: "hard"
+    description: "Identify subtle security vulnerabilities like SQL and Command injections."
