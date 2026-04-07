@@ -1,15 +1,14 @@
+import uvicorn
 from fastapi import FastAPI
 from environment import CodeReviewEnv, Action
 
 app = FastAPI()
 env = CodeReviewEnv()
 
-# Keeps the space alive and responds to Scaler's automated ping
 @app.get("/")
 def ping():
     return {"status": "200 OK"}
 
-# Endpoints required by the OpenEnv spec
 @app.get("/state")
 def state():
     return env.state().model_dump()
@@ -29,3 +28,10 @@ def step(action: Action):
         "done": done,
         "info": info
     }
+
+# --- MANDATORY MAIN FUNCTION FOR VALIDATOR ---
+def main():
+    uvicorn.run(app, host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
