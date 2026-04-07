@@ -52,20 +52,43 @@ class CodeReviewEnv:
     def state(self) -> Observation:
         return Observation(pull_requests=self.current_state, prs_left=len(self.current_state))
 
-    def step(self, action: Action) -> Tuple[Observation, Reward, bool, Dict[str, Any]]:
-        self.steps_taken += 1
-        reward_val = 0.0
+    def step(self, action: Action):
+        reward_value = 0.0
         
-        # Grader Logic: Did the AI make the correct review decision?
-        if action.pr_id in self.correct_answers:
-            if action.decision == self.correct_answers[action.pr_id]:
-                reward_val = 1.0 / len(self.dataset) # Partial progress scoring (0.0 to 1.0)
-                self.score += reward_val
-            
-            # Remove processed PR from the queue
-            self.current_state = [pr for pr in self.current_state if pr["id"] != action.pr_id]
+        # Grading logic
+        if self.task_level == "easy":
+            # Easy task: Reject the syntax error (pr1)
+            if action.pr_id == "pr1" and action.decision == "REJECT_BUG":
+                reward_value = 1.0
+        
+        elif self.task_level == "medium":
+            # Medium task: Approve clean (m2), Reject bug (m1)
+            if action.pr_id == "m1" and action.decision == "REJECT_BUG":
+                reward_value = 0.5
+            elif action.pr_id == "m2" and action.decision == "APPROVE":
+                reward_value = 0.5
+                
+        elif self.task_level == "hard":
+            # Hard task: Detect security flaws (h1, h2) or Approve clean (h3)
+            if action.pr_id in ["h1", "h2"] and action.decision == "REJECT_SECURITY":
+                reward_value = 0.333
+            elif action.pr_id == "h3" and action.decision == "APPROVE":
+                reward_value = 0.334
 
-        # Episode ends when queue is empty or taking too many steps
-        done = len(self.current_state) == 0 or self.steps_taken >= len(self.dataset) + 2
+        self.total_reward += reward_value
         
-        return self.state(), Reward(score=reward_val), done, {"total_score": self.score}
+        # Remove the reviewed PR
+        self.current_prs = [pr for pr in self.current_prs if pr["id"] != action.pr_id]
+        done = len(self.current_prs) == 0
+        
+        # --- THE FIX FOR THE "OUT OF RANGE" ERROR ---
+        # Clamp score to be strictly BETWEEN 0 and 1 (e.g., 0.01 to 0.99)
+        final_score = self.total_reward
+        if final_score >= 1.0:
+            final_score = 0.99
+        elif final_score <= 0.0:
+            final_score = 0.01
+            
+        reward = Reward(score=final_score)
+        
+        return self.state(), reward, done, {"total_score": final_score}
