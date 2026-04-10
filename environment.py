@@ -1,10 +1,13 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
+import random
 
 # --- 1. OpenEnv Typed Models ---
 class Observation(BaseModel):
     pull_requests: List[Dict[str, str]]
     prs_left: int
+    system_load: float       # New metadata
+    queue_priority: str      # New metadata
 
 class Action(BaseModel):
     pr_id: str
@@ -18,27 +21,32 @@ class CodeReviewEnv:
     def __init__(self, task_level: str = "easy"):
         self.task_level = task_level
         self.dataset = self._load_task(task_level)
+        self.total_prs = len(self.dataset)
         self.current_state = []
         self.correct_answers = {}
-        # total_reward must be defined in __init__ to avoid AttributeErrors
         self.total_reward = 0.0 
         self.steps_taken = 0
         self.reset()
 
     def _load_task(self, level: str):
-        # 3 Tasks with increasing difficulty
+        # Expanded dataset with realistic vulnerabilities and clean code noise
         tasks = {
             "easy": [
-                {"id": "pr1", "code": 'print("Hello World)', "true_label": "REJECT_BUG"} # Missing closing quote
+                {"id": "e1", "code": 'print("Hello World)', "true_label": "REJECT_BUG", "desc": "Syntax Error"},
+                {"id": "e2", "code": 'x = [1, 2, 3]\nprint(x[5])', "true_label": "REJECT_BUG", "desc": "Index Out of Bounds"},
+                {"id": "e3", "code": 'def add(a, b):\n    return a + b', "true_label": "APPROVE", "desc": "Clean Code"}
             ],
             "medium": [
-                {"id": "m1", "code": 'def add(a, b):\n    return a - b', "true_label": "REJECT_BUG"}, # Logic error
-                {"id": "m2", "code": 'def greet(name):\n    return f"Hello {name}"', "true_label": "APPROVE"}
+                {"id": "m1", "code": 'def factorial(n):\n    return n * factorial(n)', "true_label": "REJECT_BUG", "desc": "Infinite Recursion"},
+                {"id": "m2", "code": 'import time\ndef wait():\n    time.sleep("10")', "true_label": "REJECT_BUG", "desc": "Type Error"},
+                {"id": "m3", "code": 'API_KEY = "12345-ABCDE-67890"', "true_label": "REJECT_SECURITY", "desc": "Hardcoded Credential"},
+                {"id": "m4", "code": 'class User:\n    def __init__(self, name):\n        self.name = name', "true_label": "APPROVE", "desc": "Clean Class"}
             ],
             "hard": [
-                {"id": "h1", "code": 'query = "SELECT * FROM users WHERE id = " + user_input\nexecute(query)', "true_label": "REJECT_SECURITY"}, # SQL Injection
-                {"id": "h2", "code": 'import os\nos.system("rm -rf /" + user_dir)', "true_label": "REJECT_SECURITY"}, # Command Injection
-                {"id": "h3", "code": 'def is_even(num):\n    return num % 2 == 0', "true_label": "APPROVE"}
+                {"id": "h1", "code": 'eval(user_input)', "true_label": "REJECT_SECURITY", "desc": "Arbitrary Code Execution"},
+                {"id": "h2", "code": 'import hashlib\ndef hash_pw(pw):\n    return hashlib.md5(pw.encode()).hexdigest()', "true_label": "REJECT_SECURITY", "desc": "Weak Cryptography"},
+                {"id": "h3", "code": 'def get_user(id):\n    return db.execute(f"SELECT * FROM users WHERE id={id}")', "true_label": "REJECT_SECURITY", "desc": "SQL Injection"},
+                {"id": "h4", "code": 'def process_list(items):\n    return sorted([i for i in items if i > 0])', "true_label": "APPROVE", "desc": "Clean Logic"}
             ]
         }
         return tasks.get(level, tasks["easy"])
@@ -51,36 +59,36 @@ class CodeReviewEnv:
         return self.state()
 
     def state(self) -> Observation:
-        return Observation(pull_requests=self.current_state, prs_left=len(self.current_state))
+        return Observation(
+            pull_requests=self.current_state, 
+            prs_left=len(self.current_state),
+            system_load=round(random.uniform(0.1, 0.9), 2),
+            queue_priority=self.task_level.upper()
+        )
 
     def step(self, action: Action):
         reward_value = 0.0
+        step_info = {"status": "processed"}
         
-        # Grading logic
-        if self.task_level == "easy":
-            if action.pr_id == "pr1" and action.decision == "REJECT_BUG":
-                reward_value = 1.0
-        
-        elif self.task_level == "medium":
-            if action.pr_id == "m1" and action.decision == "REJECT_BUG":
-                reward_value = 0.5
-            elif action.pr_id == "m2" and action.decision == "APPROVE":
-                reward_value = 0.5
-                
-        elif self.task_level == "hard":
-            if action.pr_id in ["h1", "h2"] and action.decision == "REJECT_SECURITY":
-                reward_value = 0.333
-            elif action.pr_id == "h3" and action.decision == "APPROVE":
-                reward_value = 0.334
+        # Pro-Level Dynamic Grading Logic
+        if action.pr_id in self.correct_answers:
+            expected = self.correct_answers[action.pr_id]
+            if action.decision == expected:
+                # Proportional reward based on dataset size
+                reward_value = 1.0 / self.total_prs
+                step_info["feedback"] = f"Correct! PR {action.pr_id} properly handled."
+            else:
+                step_info["feedback"] = f"Incorrect. Agent chose {action.decision}, but expected {expected}."
+                step_info["error_flag"] = True
 
         self.total_reward += reward_value
+        self.steps_taken += 1
         
         # Remove the reviewed PR from state
         self.current_state = [pr for pr in self.current_state if pr["id"] != action.pr_id]
         done = len(self.current_state) == 0
         
         # --- PHASE 2 FIX: STRICTLY BETWEEN 0 AND 1 ---
-        # We use 0.95 and 0.05 to ensure we are never exactly 0 or 1
         final_score = self.total_reward
         if final_score >= 1.0:
             final_score = 0.95
@@ -88,5 +96,6 @@ class CodeReviewEnv:
             final_score = 0.05
             
         reward = Reward(score=final_score)
+        step_info["total_score"] = final_score
         
-        return self.state(), reward, done, {"total_score": final_score}
+        return self.state(), reward, done, step_info
